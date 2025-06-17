@@ -53,8 +53,8 @@
 
 // Motor 3 Parameters
 #define MOTOR3_PWM  -1
-#define MOTOR3_IN_A 24
-#define MOTOR3_IN_B 25
+#define MOTOR3_IN_A 23
+#define MOTOR3_IN_B 22
 
 
 // INVERT ENCODER DIRECTIONS
@@ -77,13 +77,17 @@
 #define MOTOR3_ENCODER_PIN_A 4  
 #define MOTOR3_ENCODER_PIN_B 5 
 
-// I2C communication
-#define SCL_PIN 19
-#define SDA_PIN 18
-
 // Servo Parameter
 #define CONTINUTE_SERVO1_PIN 6
 #define CONTINUTE_SERVO2_PIN 7
 #define CONTINUTE_SERVO3_PIN 8
+
+// I2C communication
+#define SCL_PIN 19
+#define SDA_PIN 18
+#define SCL1_PIN 16
+#define SDA1_PIN 17
+#define SCL2_PIN 24
+#define SDA2_PIN 25
 
 #endif

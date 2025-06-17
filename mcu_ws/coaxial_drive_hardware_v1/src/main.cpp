@@ -52,10 +52,10 @@
 
 //------------------------------ < Define > -------------------------------------//
 
-rcl_publisher_t debug_motor_publisher;
-rcl_publisher_t debug_encoder_publisher;
+rcl_publisher_t debug_move_wheel_motor_publisher;
+rcl_publisher_t debug_move_wheel_encoder_publisher;
 
-rcl_subscription_t moveMotor_subscriber;
+rcl_subscription_t move_wheel_motor_subscriber;
 
 geometry_msgs__msg__Twist debug_motor_msg;
 geometry_msgs__msg__Twist debug_encoder_msg;
@@ -85,7 +85,11 @@ enum states
 Motor motor1(PWM_FREQUENCY, PWM_BITS, MOTOR1_INV, MOTOR1_BREAK, MOTOR1_PWM, MOTOR1_IN_A, MOTOR1_IN_B);
 Motor motor2(PWM_FREQUENCY, PWM_BITS, MOTOR2_INV, MOTOR2_BREAK, MOTOR2_PWM, MOTOR2_IN_A, MOTOR2_IN_B);
 Motor motor3(PWM_FREQUENCY, PWM_BITS, MOTOR3_INV, MOTOR3_BREAK, MOTOR3_PWM, MOTOR3_IN_A, MOTOR3_IN_B);
-Motor motor4(PWM_FREQUENCY, PWM_BITS, MOTOR4_INV, MOTOR4_BREAK, MOTOR4_PWM, MOTOR4_IN_A, MOTOR4_IN_B);
+
+// Move Encoder
+Encoder Encoder1(MOTOR1_ENCODER_PIN_A, MOTOR1_ENCODER_PIN_B, MOTOR1_ENCODER_INCRIMENT, COUNTS_PER_REV1, MOTOR1_ENCODER_INV);
+Encoder Encoder2(MOTOR2_ENCODER_PIN_A, MOTOR2_ENCODER_PIN_B, MOTOR2_ENCODER_INCRIMENT, COUNTS_PER_REV2, MOTOR2_ENCODER_INV);
+Encoder Encoder3(MOTOR3_ENCODER_PIN_A, MOTOR3_ENCODER_PIN_B, MOTOR3_ENCODER_INCRIMENT, COUNTS_PER_REV3, MOTOR3_ENCODER_INV);
 
 //------------------------------ < Fuction Prototype > ------------------------------//
 
@@ -98,6 +102,7 @@ struct timespec getTime();
 
 void MovePower(float, float, float);
 void Move();
+void getEncoderData();
 //------------------------------ < Main > -------------------------------------//
 
 void setup()
@@ -129,7 +134,7 @@ void loop()
         }
         break;
     case AGENT_DISCONNECTED:
-        MovePower(0, 0, 0, 0);
+        MovePower(0, 0, 0);
         destroyEntities();
         state = WAITING_AGENT;
         break;
@@ -140,12 +145,11 @@ void loop()
 
 //------------------------------ < Fuction > -------------------------------------//
 
-void MovePower(float Motor1Speed, float Motor2Speed, float Motor3Speed, float Motor4Speed)
+void MovePower(float Motor1Speed, float Motor2Speed, float Motor3Speed)
 {
     motor1.spin(Motor1Speed);
     motor2.spin(Motor2Speed);
     motor3.spin(Motor3Speed);
-    motor4.spin(Motor4Speed);
 }
 
 void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
@@ -154,6 +158,7 @@ void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
     if (timer != NULL)
     {
         Move();
+        getEncoderData();
         publishData();
     }
 }
@@ -179,16 +184,25 @@ bool createEntities()
     rclc_support_init_with_options(&support, 0, NULL, &init_options, &allocator);
 
     // create node
-    RCCHECK(rclc_node_init_default(&node, "int32_publisher_rclc", "", &support));
+    RCCHECK(rclc_node_init_default(&node, "coaxial_swerve_basemove_hardware", "", &support));
 
+    // Pub
     RCCHECK(rclc_publisher_init_best_effort(
-        &debug_motor_publisher,
+        &debug_move_wheel_motor_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        "debug/motor"));
+        "debug/wheel/motor"));
+
+    RCCHECK(rclc_publisher_init_best_effort(
+        &debug_move_wheel_encoder_publisher,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+        "debug/wheel/encoder"));
+
+    // Sub
 
     RCCHECK(rclc_subscription_init_default(
-        &moveMotor_subscriber,
+        &move_wheel_motor_subscriber,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
         "/motor_speed"));
@@ -205,7 +219,7 @@ bool createEntities()
 
     RCCHECK(rclc_executor_add_subscription(
         &executor,
-        &moveMotor_subscriber,
+        &move_wheel_motor_subscriber,
         &moveMotor_msg,
         &twistCallback,
         ON_NEW_DATA));
@@ -222,8 +236,9 @@ bool destroyEntities()
     rmw_context_t *rmw_context = rcl_context_get_rmw_context(&support.context);
     (void)rmw_uros_set_context_entity_destroy_session_timeout(rmw_context, 0);
 
-    // rcl_publisher_fini(&debug_motor_publisher, &node);
-    rcl_subscription_fini(&moveMotor_subscriber, &node);
+    rcl_publisher_fini(&debug_move_wheel_motor_publisher, &node);
+    rcl_publisher_fini(&debug_move_wheel_encoder_publisher, &node);
+    rcl_subscription_fini(&move_wheel_motor_subscriber, &node);
     rcl_node_fini(&node);
     rcl_timer_fini(&control_timer);
     rclc_executor_fini(&executor);
@@ -237,9 +252,16 @@ void Move()
     float motor1Speed = moveMotor_msg.linear.x;
     float motor2Speed = moveMotor_msg.linear.y;
     float motor3Speed = moveMotor_msg.linear.z;
-    float motor4Speed = moveMotor_msg.angular.x;
-    MovePower(motor1Speed, motor2Speed,
-              motor3Speed, motor4Speed);
+    MovePower(motor1Speed, motor2Speed, motor3Speed);
+}
+
+void getEncoderData()
+{
+    // Get encoder data
+    debug_encoder_msg.linear.x = Encoder1.getRPM();
+    debug_encoder_msg.linear.y = Encoder2.getRPM();
+    debug_encoder_msg.linear.z = Encoder3.getRPM();
+
 }
 
 void publishData()
@@ -247,9 +269,9 @@ void publishData()
     debug_motor_msg.linear.x = moveMotor_msg.linear.x;
     debug_motor_msg.linear.y = moveMotor_msg.linear.y;
     debug_motor_msg.linear.z = moveMotor_msg.linear.z;
-    debug_motor_msg.angular.x = moveMotor_msg.angular.x;
     struct timespec time_stamp = getTime();
-    rcl_publish(&debug_motor_publisher, &debug_motor_msg, NULL);
+    rcl_publish(&debug_move_wheel_motor_publisher, &debug_motor_msg, NULL);
+    rcl_publish(&debug_move_wheel_encoder_publisher, &debug_encoder_msg, NULL);
 }
 
 void syncTime()

@@ -75,11 +75,18 @@ class Encoder
 {
 public:
 	// one step setup like before
-	Encoder(uint8_t pin1, uint8_t pin2) { begin(pin1, pin2);}
+	Encoder(uint8_t pin1, uint8_t pin2, bool invert = false, float gear_ratio = 1.0f) { begin(pin1, pin2, invert, gear_ratio);}
 
 	// two step setup for platforms that have issues with constructor ordering
 	Encoder() { }
-	void begin(uint8_t pin1, uint8_t pin2) {
+	void begin(uint8_t pin1, uint8_t pin2, bool invert = false, float gear_ratio = 1.0f) {
+		uint8_t temp_pin = pin1;
+		// this->gear_ratio = gear_ratio;
+		if(invert)
+		{
+			pin1 = pin2;
+			pin2 = temp_pin;
+		}
 		#ifdef INPUT_PULLUP
 		pinMode(pin1, INPUT_PULLUP);
 		pinMode(pin2, INPUT_PULLUP);
@@ -154,8 +161,31 @@ public:
 		encoder.position = p;
 	}
 #endif
+	
+	float getRPM(){
+		long encoder_ticks = read();
+		//this function calculates the motor's RPM based on encoder ticks and delta time
+		unsigned long current_time = millis();
+		unsigned long dt = current_time - prev_update_time_;
+
+		//convert the time from milliseconds to minutes
+		double dtm = (double)dt / 6000.0;
+		double delta_ticks = encoder_ticks - prev_encoder_ticks_;
+
+		//calculate wheel's speed (RPM)
+		prev_update_time_ = current_time;
+		prev_encoder_ticks_ = encoder_ticks;
+
+		return ((delta_ticks / counts_per_rev_) / dtm) * this->gear_ratio;
+	}
+
 private:
+	int counts_per_rev_;
+	unsigned long prev_update_time_;
+    long prev_encoder_ticks_;
 	Encoder_internal_state_t encoder;
+	float gear_ratio;
+
 #ifdef ENCODER_USE_INTERRUPTS
 	uint8_t interrupts_in_use;
 #endif
