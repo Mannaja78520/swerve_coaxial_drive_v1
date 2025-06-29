@@ -10,7 +10,7 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <std_msgs/msg/float32_multi_array.h>
+#include <std_msgs/msg/string.h>
 #include <geometry_msgs/msg/twist.h>
 
 #include <config.h>
@@ -64,10 +64,15 @@ rcl_publisher_t debug_move_wheel_motor_publisher;
 rcl_publisher_t debug_move_wheel_encoder_publisher;
 
 rcl_subscription_t move_wheel_motor_subscriber;
+rcl_subscription_t movement_mode_subscriber;
+rcl_subscription_t wheel_angle_subscriber;
 
+
+std_msgs__msg__String movement_mode_msg;
 geometry_msgs__msg__Twist debug_motor_msg;
 geometry_msgs__msg__Twist debug_encoder_msg;
 geometry_msgs__msg__Twist moveMotor_msg;
+geometry_msgs__msg__Twist wheel_angle_msg;
 
 rclc_executor_t executor;
 rclc_support_t support;
