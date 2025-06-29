@@ -81,7 +81,7 @@ public:
 	Encoder() { }
 	void begin(uint8_t pin1, uint8_t pin2, bool invert = false, float gear_ratio = 1.0f) {
 		uint8_t temp_pin = pin1;
-		// this->gear_ratio = gear_ratio;
+		this->gear_ratio = gear_ratio;
 		if(invert)
 		{
 			pin1 = pin2;

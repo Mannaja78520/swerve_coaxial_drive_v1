@@ -10,15 +10,23 @@
 #include <rclc/rclc.h>
 #include <rclc/executor.h>
 
-#include <std_msgs/msg/string.h>
-#include <std_msgs/msg/bool.h>
-#include <std_msgs/msg/int8.h>
-#include <std_msgs/msg/int16_multi_array.h>
+#include <std_msgs/msg/float32_multi_array.h>
 #include <geometry_msgs/msg/twist.h>
 
 #include <config.h>
-#include <motorprik.h>
-#include <Encoder.h>
+#include <motor.h>
+
+#if defined(ESP32)
+    #include <esp32_Encoder.h>    
+    #include <ESP32Servo.h>
+
+#else
+    #include<Servo.h>
+    #include <Encoder.h>
+#endif
+
+#include <PIDF.h>
+
 
 #define RCCHECK(fn)                  \
     {                                \
@@ -81,27 +89,39 @@ enum states
     AGENT_DISCONNECTED
 } state;
 
+PIDF motor1_pidf(PWM_Max, PWM_Min, Wheel_Motor_KP, Wheel_Motor_KI, Wheel_Motor_I_Min, Wheel_Motor_I_Max, Wheel_Motor_KD, Wheel_Motor_KF, Wheel_Motor_ERROR_TOLERANCE);
+PIDF motor2_pidf(PWM_Max, PWM_Min, Wheel_Motor_KP, Wheel_Motor_KI, Wheel_Motor_I_Min, Wheel_Motor_I_Max, Wheel_Motor_KD, Wheel_Motor_KF, Wheel_Motor_ERROR_TOLERANCE);
+PIDF motor3_pidf(PWM_Max, PWM_Min, Wheel_Motor_KP, Wheel_Motor_KI, Wheel_Motor_I_Min, Wheel_Motor_I_Max, Wheel_Motor_KD, Wheel_Motor_KF, Wheel_Motor_ERROR_TOLERANCE);
+
 // Move motor
-Motor motor1(PWM_FREQUENCY, PWM_BITS, MOTOR1_INV, MOTOR1_BREAK, MOTOR1_PWM, MOTOR1_IN_A, MOTOR1_IN_B);
-Motor motor2(PWM_FREQUENCY, PWM_BITS, MOTOR2_INV, MOTOR2_BREAK, MOTOR2_PWM, MOTOR2_IN_A, MOTOR2_IN_B);
-Motor motor3(PWM_FREQUENCY, PWM_BITS, MOTOR3_INV, MOTOR3_BREAK, MOTOR3_PWM, MOTOR3_IN_A, MOTOR3_IN_B);
+Controller motor1(Controller::PRIK_KEE_NOO, PWM_FREQUENCY, PWM_BITS, MOTOR1_INV, MOTOR1_BRAKE, MOTOR1_PWM, MOTOR1_IN_A, MOTOR1_IN_B);
+Controller motor2(Controller::PRIK_KEE_NOO, PWM_FREQUENCY, PWM_BITS, MOTOR2_INV, MOTOR2_BRAKE, MOTOR2_PWM, MOTOR2_IN_A, MOTOR2_IN_B);
+Controller motor3(Controller::PRIK_KEE_NOO, PWM_FREQUENCY, PWM_BITS, MOTOR3_INV, MOTOR3_BRAKE, MOTOR3_PWM, MOTOR3_IN_A, MOTOR3_IN_B);
+
 
 // Move Encoder
-Encoder Encoder1(MOTOR1_ENCODER_PIN_A, MOTOR1_ENCODER_PIN_B, MOTOR1_ENCODER_INCRIMENT, COUNTS_PER_REV1, MOTOR1_ENCODER_INV);
-Encoder Encoder2(MOTOR2_ENCODER_PIN_A, MOTOR2_ENCODER_PIN_B, MOTOR2_ENCODER_INCRIMENT, COUNTS_PER_REV2, MOTOR2_ENCODER_INV);
-Encoder Encoder3(MOTOR3_ENCODER_PIN_A, MOTOR3_ENCODER_PIN_B, MOTOR3_ENCODER_INCRIMENT, COUNTS_PER_REV3, MOTOR3_ENCODER_INV);
-
+#if defined(ESP32)
+    esp32_Encoder Encoder1(MOTOR1_ENCODER_PIN_A, MOTOR1_ENCODER_PIN_B, COUNTS_PER_REV1, MOTOR1_ENCODER_INV, MOTOR1_ENCODER_RATIO);
+    esp32_Encoder Encoder2(MOTOR2_ENCODER_PIN_A, MOTOR2_ENCODER_PIN_B, COUNTS_PER_REV2, MOTOR2_ENCODER_INV, MOTOR2_ENCODER_RATIO);
+    esp32_Encoder Encoder3(MOTOR3_ENCODER_PIN_A, MOTOR3_ENCODER_PIN_B, COUNTS_PER_REV3, MOTOR3_ENCODER_INV, MOTOR3_ENCODER_RATIO);
+#else
+    Encoder Encoder1(MOTOR1_ENCODER_PIN_A, MOTOR1_ENCODER_PIN_B, COUNTS_PER_REV1, MOTOR1_ENCODER_INV, MOTOR1_ENCODER_RATIO);
+    Encoder Encoder2(MOTOR2_ENCODER_PIN_A, MOTOR2_ENCODER_PIN_B, COUNTS_PER_REV2, MOTOR2_ENCODER_INV, MOTOR2_ENCODER_RATIO);
+    Encoder Encoder3(MOTOR3_ENCODER_PIN_A, MOTOR3_ENCODER_PIN_B, COUNTS_PER_REV3, MOTOR3_ENCODER_INV, MOTOR3_ENCODER_RATIO);
+#endif
 //------------------------------ < Fuction Prototype > ------------------------------//
 
 void rclErrorLoop();
 void syncTime();
 bool createEntities();
 bool destroyEntities();
-void publishData();
+void flashLED(unsigned int);
 struct timespec getTime();
 
+void publishData();
 void MovePower(float, float, float);
 void Move();
+void MoveRPM();
 void getEncoderData();
 //------------------------------ < Main > -------------------------------------//
 
@@ -110,10 +130,13 @@ void setup()
 
     Serial.begin(115200);
     set_microros_serial_transports(Serial);
+    pinMode(LED_BUILTIN, OUTPUT);
 }
 
 void loop()
 {
+    EXECUTE_EVERY_N_MS(1000, digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)););
+
     switch (state)
     {
     case WAITING_AGENT:
@@ -157,8 +180,9 @@ void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
     RCLC_UNUSED(last_call_time);
     if (timer != NULL)
     {
-        Move();
         getEncoderData();
+        // Move();
+        MoveRPM();
         publishData();
     }
 }
@@ -191,13 +215,13 @@ bool createEntities()
         &debug_move_wheel_motor_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        "debug/wheel/motor"));
+        "debug/wheel/motor_speed"));
 
     RCCHECK(rclc_publisher_init_best_effort(
         &debug_move_wheel_encoder_publisher,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        "debug/wheel/encoder"));
+        "debug/wheel/encoder_rpm"));
 
     // Sub
 
@@ -205,7 +229,7 @@ bool createEntities()
         &move_wheel_motor_subscriber,
         &node,
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
-        "/motor_speed"));
+        "/wheel/motor_speed"));
 
     // create timer for actuating the motors at 50 Hz (1000/20)
     const unsigned int control_timeout = 20;
@@ -255,6 +279,20 @@ void Move()
     MovePower(motor1Speed, motor2Speed, motor3Speed);
 }
 
+void MoveRPM()
+{
+    // Convert the linear.x, linear.y, and linear.z to RPM for each motor
+    float motor1RPM_target = moveMotor_msg.linear.x;
+    float motor2RPM_target = moveMotor_msg.linear.y;
+    float motor3RPM_target = moveMotor_msg.linear.z;
+
+    // Set the RPM for each motor
+    float motor1Speed = motor1_pidf.compute(motor1RPM_target, debug_encoder_msg.linear.x);
+    float motor2Speed = motor2_pidf.compute(motor2RPM_target, debug_encoder_msg.linear.y);
+    float motor3Speed = motor3_pidf.compute(motor3RPM_target, debug_encoder_msg.linear.z);
+    MovePower(motor1Speed, motor2Speed, motor3Speed);
+}
+
 void getEncoderData()
 {
     // Get encoder data
@@ -300,14 +338,18 @@ void rclErrorLoop()
 {
     while (true)
     {
+        flashLED(3);
     }
 }
 
-void flashLED(int n_times)
+void flashLED(unsigned int n_times)
 {
     for (int i = 0; i < n_times; i++)
     {
-
+        digitalWrite(LED_BUILTIN, HIGH);
+        delay(100);
+        digitalWrite(LED_BUILTIN, LOW);
+        delay(100);
     }
     delay(1000);
 }

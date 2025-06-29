@@ -41,13 +41,15 @@ install(
 ################################################################################
 # Python package installation
 ################################################################################
-ament_python_install_package(${PROJECT_NAME})
+# ament_python_install_package(${PROJECT_NAME})
 
 ################################################################################
 # Install Python Programs
 ################################################################################
 install(PROGRAMS
   # joystick/joystick_control.py
+  control/keyboard/keyboard_control.py
+  scripts/robot_movement.py
 
   DESTINATION lib/${PROJECT_NAME}
 )

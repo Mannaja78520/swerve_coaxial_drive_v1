@@ -1,5 +1,5 @@
-#ifndef HARDWARE_PIN_H
-#define HARDWARE_PIN_H
+#ifndef TEENSY_HARDWARE_PIN_H
+#define TEENSY_HARDWARE_PIN_H
 
 
 #define K_P 0.6
