@@ -15,6 +15,11 @@
 
 #include <config.h>
 #include <motor.h>
+#include <PIDF.h>
+#include <Adafruit_I2CDevice.h>
+#include <Adafruit_AS5600.h>
+#include <Utilize.h>
+#include <TCA9548A.h>
 
 #if defined(ESP32)
     #include <esp32_Encoder.h>    
@@ -25,7 +30,6 @@
     #include <Encoder.h>
 #endif
 
-#include <PIDF.h>
 
 
 #define RCCHECK(fn)                  \
@@ -67,8 +71,8 @@ rcl_subscription_t move_wheel_motor_subscriber;
 rcl_subscription_t movement_mode_subscriber;
 rcl_subscription_t wheel_angle_subscriber;
 
-
 std_msgs__msg__String movement_mode_msg;
+
 geometry_msgs__msg__Twist debug_motor_msg;
 geometry_msgs__msg__Twist debug_encoder_msg;
 geometry_msgs__msg__Twist moveMotor_msg;
@@ -86,6 +90,11 @@ unsigned long prev_cmd_time = 0;
 unsigned long prev_odom_update = 0;
 unsigned long current_time = 0;
 
+String movement_mode = "mps"; 
+float motor1_target = 0.0;
+float motor2_target = 0.0;
+float motor3_target = 0.0;
+
 enum states
 {
     WAITING_AGENT,
@@ -93,6 +102,18 @@ enum states
     AGENT_CONNECTED,
     AGENT_DISCONNECTED
 } state;
+
+Adafruit_AS5600 as5600[3];  // One for each sensor
+PIDF pidf_wheel[3] = {
+    PIDF(Servo_Motor_MinSpeed, Servo_Motor_MaxSpeed, Servo_Motor_KP, Servo_Motor_KI, Servo_Motor_I_Min, Servo_Motor_I_Max, Servo_Motor_KD, Servo_Motor_KF, Servo_Motor_ERROR_TOLERANCE),
+    PIDF(Servo_Motor_MinSpeed, Servo_Motor_MaxSpeed, Servo_Motor_KP, Servo_Motor_KI, Servo_Motor_I_Min, Servo_Motor_I_Max, Servo_Motor_KD, Servo_Motor_KF, Servo_Motor_ERROR_TOLERANCE),
+    PIDF(Servo_Motor_MinSpeed, Servo_Motor_MaxSpeed, Servo_Motor_KP, Servo_Motor_KI, Servo_Motor_I_Min, Servo_Motor_I_Max, Servo_Motor_KD, Servo_Motor_KF, Servo_Motor_ERROR_TOLERANCE),
+};
+
+float servo_zero_point[3] = {CONTINUTE_SERVO1_ZERO_POINT, CONTINUTE_SERVO2_ZERO_POINT, CONTINUTE_SERVO3_ZERO_POINT}; // Zero point for each servo
+
+Servo servo_wheel[3];
+const int servoPins[3] = {CONTINUTE_SERVO1_PIN, CONTINUTE_SERVO2_PIN, CONTINUTE_SERVO3_PIN};
 
 PIDF motor1_pidf(PWM_Max, PWM_Min, Wheel_Motor_KP, Wheel_Motor_KI, Wheel_Motor_I_Min, Wheel_Motor_I_Max, Wheel_Motor_KD, Wheel_Motor_KF, Wheel_Motor_ERROR_TOLERANCE);
 PIDF motor2_pidf(PWM_Max, PWM_Min, Wheel_Motor_KP, Wheel_Motor_KI, Wheel_Motor_I_Min, Wheel_Motor_I_Max, Wheel_Motor_KD, Wheel_Motor_KF, Wheel_Motor_ERROR_TOLERANCE);
@@ -114,6 +135,8 @@ Controller motor3(Controller::PRIK_KEE_NOO, PWM_FREQUENCY, PWM_BITS, MOTOR3_INV,
     Encoder Encoder2(MOTOR2_ENCODER_PIN_A, MOTOR2_ENCODER_PIN_B, COUNTS_PER_REV2, MOTOR2_ENCODER_INV, MOTOR2_ENCODER_RATIO);
     Encoder Encoder3(MOTOR3_ENCODER_PIN_A, MOTOR3_ENCODER_PIN_B, COUNTS_PER_REV3, MOTOR3_ENCODER_INV, MOTOR3_ENCODER_RATIO);
 #endif
+
+TCA9548A tca;
 //------------------------------ < Fuction Prototype > ------------------------------//
 
 void rclErrorLoop();
@@ -124,18 +147,52 @@ void flashLED(unsigned int);
 struct timespec getTime();
 
 void publishData();
-void MovePower(float, float, float);
+void getEncoderData();
 void Move();
 void MoveRPM();
-void getEncoderData();
+void RotageWheel();
+void MovePower(float, float, float);
 //------------------------------ < Main > -------------------------------------//
 
 void setup()
 {
 
     Serial.begin(115200);
-    set_microros_serial_transports(Serial);
     pinMode(LED_BUILTIN, OUTPUT);
+    #if defined(ESP32)
+        tca.begin();
+        int first_tca_channel = 2;
+        for (int i = 0; i < 3; i++) {
+            int tca_channel = i + first_tca_channel;
+            tca.selectChannel(tca_channel);
+            
+            if (!as5600[i].begin()) {
+                Serial.print("AS5600 on channel ");
+                Serial.print(tca_channel);
+                Serial.println(" not found!");
+            }
+
+            as5600[i].setPowerMode(AS5600_POWER_MODE_NOM);
+            as5600[i].setHysteresis(AS5600_HYSTERESIS_OFF);
+            as5600[i].setOutputStage(AS5600_OUTPUT_STAGE_ANALOG_FULL);
+            as5600[i].setSlowFilter(AS5600_SLOW_FILTER_16X);
+            as5600[i].setFastFilterThresh(AS5600_FAST_FILTER_THRESH_SLOW_ONLY);
+            as5600[i].setZPosition(0);
+            as5600[i].setMPosition(4095);
+            as5600[i].setMaxAngle(4095);
+        }
+
+        ESP32PWM::allocateTimer(0);
+        ESP32PWM::allocateTimer(1);
+        ESP32PWM::allocateTimer(2);
+
+        for (int i = 0; i < 3; i++) {
+            servo_wheel[i].setPeriodHertz(50);
+            servo_wheel[i].attach(servoPins[i], 500, 2500);
+            servo_wheel[i].write(90);
+        }
+    #endif
+    set_microros_serial_transports(Serial);
 }
 
 void loop()
@@ -186,20 +243,42 @@ void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
     if (timer != NULL)
     {
         getEncoderData();
-        // Move();
+        if (movement_mode_msg.data.data == "rpm"){
+        }
+        else if (movement_mode_msg.data.data == "manual"){
         MoveRPM();
+            Move();
+        }
+        RotageWheel();
         publishData();
     }
 }
 
-void twistCallback(const void *msgin)
+void wheelMoveCallback(const void *msgin)
 {
     prev_cmd_time = millis();
+    const geometry_msgs__msg__Twist *msg = (const geometry_msgs__msg__Twist *)msgin;
+    motor1_target = msg->linear.x;
+    motor2_target = msg->linear.y;
+    motor3_target = msg->linear.z;
 }
 
-void twist2Callback(const void *msgin)
+void movementModeCallback(const void *msgin)
 {
     prev_cmd_time = millis();
+    // const std_msgs__msg__String *msg = (const std_msgs__msg__String *)msgin;
+    // movement_mode = String(msg->data.data);
+    // Example: Print mode (optional)
+    // Serial.print("Movement Mode: ");
+    // Serial.println(msg->data.data);
+}
+
+void wheelAngleCallback(const void *msgin)
+{
+    prev_cmd_time = millis();
+    // const geometry_msgs__msg__Twist *msg = (const geometry_msgs__msg__Twist *)msgin;
+    // Copy the wheel angles to global variable
+    // wheel_angle_msg = *msg;
 }
 
 bool createEntities()
@@ -236,6 +315,18 @@ bool createEntities()
         ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
         "/wheel/motor_speed"));
 
+    RCCHECK(rclc_subscription_init_default(
+        &movement_mode_subscriber,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, String),
+        "/movement_mode"));
+
+    RCCHECK(rclc_subscription_init_default(
+        &wheel_angle_subscriber,
+        &node,
+        ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),
+        "/wheel/angle"));
+
     // create timer for actuating the motors at 50 Hz (1000/20)
     const unsigned int control_timeout = 20;
     RCCHECK(rclc_timer_init_default(
@@ -244,15 +335,29 @@ bool createEntities()
         RCL_MS_TO_NS(control_timeout),
         controlCallback));
     executor = rclc_executor_get_zero_initialized_executor();
-    RCCHECK(rclc_executor_init(&executor, &support.context, 3, &allocator));
+    RCCHECK(rclc_executor_init(&executor, &support.context, 4, &allocator));
 
     RCCHECK(rclc_executor_add_subscription(
         &executor,
         &move_wheel_motor_subscriber,
         &moveMotor_msg,
-        &twistCallback,
+        &wheelMoveCallback,
         ON_NEW_DATA));
     RCCHECK(rclc_executor_add_timer(&executor, &control_timer));
+
+    RCCHECK(rclc_executor_add_subscription(
+        &executor,
+        &movement_mode_subscriber,
+        &movement_mode_msg,
+        &movementModeCallback,
+        ON_NEW_DATA));
+
+    RCCHECK(rclc_executor_add_subscription(
+        &executor,
+        &wheel_angle_subscriber,
+        &wheel_angle_msg,
+        &wheelAngleCallback,
+        ON_NEW_DATA));
 
     // synchronize time with the agent
     syncTime();
@@ -278,24 +383,40 @@ bool destroyEntities()
 
 void Move()
 {
-    float motor1Speed = moveMotor_msg.linear.x;
-    float motor2Speed = moveMotor_msg.linear.y;
-    float motor3Speed = moveMotor_msg.linear.z;
-    MovePower(motor1Speed, motor2Speed, motor3Speed);
+    MovePower(motor1_target, motor2_target, motor3_target);
 }
 
 void MoveRPM()
 {
     // Convert the linear.x, linear.y, and linear.z to RPM for each motor
-    float motor1RPM_target = moveMotor_msg.linear.x;
-    float motor2RPM_target = moveMotor_msg.linear.y;
-    float motor3RPM_target = moveMotor_msg.linear.z;
-
     // Set the RPM for each motor
-    float motor1Speed = motor1_pidf.compute(motor1RPM_target, debug_encoder_msg.linear.x);
-    float motor2Speed = motor2_pidf.compute(motor2RPM_target, debug_encoder_msg.linear.y);
-    float motor3Speed = motor3_pidf.compute(motor3RPM_target, debug_encoder_msg.linear.z);
+    float motor1Speed = motor1_pidf.compute(motor1_target, debug_encoder_msg.linear.x);
+    float motor2Speed = motor2_pidf.compute(motor2_target, debug_encoder_msg.linear.y);
+    float motor3Speed = motor3_pidf.compute(motor3_target, debug_encoder_msg.linear.z);
     MovePower(motor1Speed, motor2Speed, motor3Speed);
+}
+
+void RotageWheel()
+{
+    float targetAngles[3] = {
+        WrapDegs(wheel_angle_msg.linear.x),
+        WrapDegs(wheel_angle_msg.linear.y),
+        WrapDegs(wheel_angle_msg.linear.z)
+    };
+
+    for (int i = 0; i < 3; i++) {
+        tca.selectChannel(i);
+        uint16_t raw = as5600[i].getAngle();
+        if (raw == 0xFFFF) continue;
+        float currentAngle = WrapDegs(WrapDegs(raw * 360.0 / 4096.0) + servo_zero_point[i]);
+        float error = WrapDegs(targetAngles[i] - currentAngle);
+        float output = pidf_wheel[i].compute_with_error(error);
+        float pulse = 1500 + output;
+
+        pulse = constrain(pulse, 500, 2500);
+        servo_wheel[i].writeMicroseconds(pulse);
+    }
+
 }
 
 void getEncoderData()

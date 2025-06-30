@@ -1,15 +1,6 @@
 #ifndef TEENSY_HARDWARE_PIN_H
 #define TEENSY_HARDWARE_PIN_H
 
-
-#define Wheel_Motor_KP 0.6
-#define Wheel_Motor_KI 0.8
-#define Wheel_Motor_KD 0.5
-#define Wheel_Motor_KF 0.2
-#define Wheel_Motor_I_Max -1
-#define Wheel_Motor_I_Min -1 
-#define Wheel_Motor_ERROR_TOLERANCE 1
-
 //define your robot' specs here
 #define MOTOR_MAX_RPM 7200                                               // motor's max RPM          
 #define MAX_RPM_RATIO 0.85                                              // max RPM allowed for each MAX_RPM_ALLOWED = MOTOR_MAX_RPM * MAX_RPM_RATIO          
@@ -85,6 +76,11 @@
 #define CONTINUTE_SERVO1_PIN 13
 #define CONTINUTE_SERVO2_PIN 12
 #define CONTINUTE_SERVO3_PIN 15
+
+// Servo Zero Point
+#define CONTINUTE_SERVO1_ZERO_POINT 0
+#define CONTINUTE_SERVO2_ZERO_POINT 0
+#define CONTINUTE_SERVO3_ZERO_POINT 0
 
 // I2C communication
 #define SCL_PIN 22

@@ -6,5 +6,6 @@
     #else
         #include "teensy_hardware_pin.h"
     #endif
+    #include "PIDF_config.h"
 
 #endif
