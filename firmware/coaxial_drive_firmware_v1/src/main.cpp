@@ -22,9 +22,9 @@
 #include <TCA9548A.h>
 
 #if defined(ESP32)
+    #include <WiFi.h>
     #include <esp32_Encoder.h>    
     #include <ESP32Servo.h>
-
 #else
     #include<Servo.h>
     #include <Encoder.h>
@@ -191,18 +191,38 @@ void setup()
             servo_wheel[i].attach(servoPins[i], 500, 2500);
             servo_wheel[i].write(90);
         }
+        // Serial.println("Initializing micro-ROS transport...");
+        
+        #endif
+    #ifdef MICROROS_WIFI
+        IPAddress agent_ip(AGENT_IP);
+        uint16_t agent_port = AGENT_PORT;
+        set_microros_wifi_transports((char*)SSID, (char*)SSID_PW, agent_ip, agent_port);
+    #else
+        set_microros_serial_transports(Serial);
     #endif
-    set_microros_serial_transports(Serial);
 }
 
 void loop()
 {
-    EXECUTE_EVERY_N_MS(1000, digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)););
+    #if defined(ESP32)
+        if (WiFi.status() != WL_CONNECTED) {
+            WiFi.begin((char*)SSID, (char*)SSID_PW);
+            delay(500);
+        }
+    #endif
 
+    EXECUTE_EVERY_N_MS(1000, digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)););
+    
     switch (state)
     {
     case WAITING_AGENT:
-        EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+        // EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+        #if defined(ESP32)
+            EXECUTE_EVERY_N_MS(1000, state = (RMW_RET_OK == rmw_uros_ping_agent(500, 5)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+        #else
+            EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_AVAILABLE : WAITING_AGENT;);
+        #endif
         break;
     case AGENT_AVAILABLE:
         state = (true == createEntities()) ? AGENT_CONNECTED : WAITING_AGENT;
@@ -212,10 +232,18 @@ void loop()
         }
         break;
     case AGENT_CONNECTED:
-        EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+        #if defined(ESP32)
+            EXECUTE_EVERY_N_MS(500, state = (RMW_RET_OK == rmw_uros_ping_agent(500, 5)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+        #else
+            EXECUTE_EVERY_N_MS(200, state = (RMW_RET_OK == rmw_uros_ping_agent(100, 1)) ? AGENT_CONNECTED : AGENT_DISCONNECTED;);
+        #endif
         if (state == AGENT_CONNECTED)
         {
-            rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+            #if defined(ESP32)
+                rclc_executor_spin_some(&executor, RCL_MS_TO_NS(500));
+            #else
+                rclc_executor_spin_some(&executor, RCL_MS_TO_NS(100));
+            #endif
         }
         break;
     case AGENT_DISCONNECTED:
@@ -243,9 +271,9 @@ void controlCallback(rcl_timer_t *timer, int64_t last_call_time)
     if (timer != NULL)
     {
         getEncoderData();
-        if (movement_mode_msg.data.data == "rpm"){
+        if (movement_mode == "rpm"){
         }
-        else if (movement_mode_msg.data.data == "manual"){
+        else if (movement_mode == "manual"){
         MoveRPM();
             Move();
         }
@@ -266,6 +294,8 @@ void wheelMoveCallback(const void *msgin)
 void movementModeCallback(const void *msgin)
 {
     prev_cmd_time = millis();
+    const std_msgs__msg__String *msg = (const std_msgs__msg__String *)msgin;
+    movement_mode = String(msg->data.data);  // Copy it to global for later use
     // const std_msgs__msg__String *msg = (const std_msgs__msg__String *)msgin;
     // movement_mode = String(msg->data.data);
     // Example: Print mode (optional)
@@ -276,6 +306,8 @@ void movementModeCallback(const void *msgin)
 void wheelAngleCallback(const void *msgin)
 {
     prev_cmd_time = millis();
+    const geometry_msgs__msg__Twist *msg = (const geometry_msgs__msg__Twist *)msgin;
+    wheel_angle_msg = *msg;
     // const geometry_msgs__msg__Twist *msg = (const geometry_msgs__msg__Twist *)msgin;
     // Copy the wheel angles to global variable
     // wheel_angle_msg = *msg;

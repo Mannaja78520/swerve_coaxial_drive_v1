@@ -3,6 +3,7 @@
 
     #ifdef ESP32
         #include "esp32_hardware_pin.h"
+        #include "conf_network.h"
     #else
         #include "teensy_hardware_pin.h"
     #endif
