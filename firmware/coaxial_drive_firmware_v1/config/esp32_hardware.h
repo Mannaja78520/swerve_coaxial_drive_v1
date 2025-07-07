@@ -23,6 +23,9 @@
 #define PWM_Max pow(2, PWM_BITS) - 1
 #define PWM_Min -PWM_Max
 
+#define FIRST_TCA_CHANNEL 3 // TCA9548A channel for the first AS5600 sensor
+#define AS5600_COUNT 3 // Number of AS5600 sensors
+
 // INVERT MOTOR DIRECTIONS
 #define MOTOR1_INV true
 #define MOTOR2_INV false
